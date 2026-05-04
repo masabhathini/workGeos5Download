@@ -1,0 +1,104 @@
+#!jinja2
+{% from 'metomi' import isodatetime %}
+{% set USER_EMAILS = "sateesh.masabathini@kaust.edu.sa" %}
+
+[scheduler]
+    allow implicit tasks = True
+    cycle point format = CCYYMMDDThhZ
+
+[task parameters]
+    type = 'aer', 'asm', 'chm'
+    aer_variable = 'airdens', 'bcphilic' #, 'bcphobic', 'brphilic', 'brphobic', 'delp', 'dms', 'du001', 'du002', 'du003', 'du004', 'du005', 'msa', 'nh3', 'ocphilic', 'ocphobic', 'so2', 'so4', 'ss002', 'ss003', 'ss004', 'ss005'
+    asm_variable = 'o3'
+    chm_variable = 'co', 'co2'
+    timestep = 0..2
+    [[templates]]
+        type = %(type)s
+        aer_variable = %(aer_variable)s
+        asm_variable = %(asm_variable)s
+        chm_variable = %(chm_variable)s
+        timestep = %(timestep)02d
+
+[scheduling]
+    initial cycle point = previous(T12)
+    runahead limit = P1D
+    [[xtriggers]]
+        clock_6H = wall_clock(offset=PT06H)
+    [[queues]]
+        [[[limitrunqueue]]]
+            limit = 3
+            members = <type>OPENDAPLINK
+
+    [[graph]]
+        P1D = """
+            @clock_6H => download_aer_<aer_variable>_<timestep> #=> clean_aer_<aer_variable>_<timestep>
+            @clock_6H => download_asm_<asm_variable>_<timestep> #=> clean_asm_<asm_variable>_<timestep>
+            @clock_9H => download_chm_<chm_variable>_<timestep> #=> clean_chm_<chm_variable>_<timestep>
+            download_aer_<aer_variable>_<timestep> & download_asm_<asm_variable>_<timestep> & download_chm_<chm_variable>_<timestep> => mergre<timestep>
+            """
+
+[runtime]
+    [[root]]
+        platform = localhost
+        init-script = """
+            set -uex
+            source ${HOME}/miniforge3/bin/activate ${HOME}/miniforge3/envs/cylc
+            echo $PATH
+            export USER_EMAILS={{USER_EMAILS}}
+            """
+        err-script = err-emailAlart.sh
+        submission retry delays = 2*PT2M
+        execution retry delays = 2*PT15M
+        [[[environment]]]
+            USER_EMAILS = {{USER_EMAILS}}
+        [[[meta]]]
+            description = " GEOS5 data download"
+            owner = "sateesh.masabathini@kaust.edu.sa"
+            team = "Data Production team."
+        [[[mail]]]
+            to = {{ USER_EMAILS }}
+        [[[events]]]
+            mail events = submission failed, submission timeout, failed
+        [[[environment]]]
+    [[download_aer_<aer_variable>_<timestep>]]
+        inherit = aerOPENDAPLINK
+        [[[environment]]]
+            rootlink = $(isodatetime $CYLC_TASK_CYCLE_POINT -f "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/fcast/inst3_3d_aer_Nv/inst3_3d_aer_Nv.%Y%m%d_00?")
+            variable = ${CYLC_TASK_PARAM_aer_variable}
+            timestepdim = "[${CYLC_TASK_PARAM_timestep}][0:71][380:520][640:800],time[${CYLC_TASK_PARAM_timestep}],lev[0:71],lat[380:520],lon[640:800]"
+            weblink = ${rootlink}${variable}${timestepdim}
+    [[download_asm_<asm_variable>_<timestep>]]
+        inherit = asmOPENDAPLINK
+        [[[environment]]]
+            rootlink = $(isodatetime $CYLC_TASK_CYCLE_POINT -f "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/fcast/inst3_3d_asm_Nv/inst3_3d_asm_Nv.%Y%m%d_00?")
+            variable = ${CYLC_TASK_PARAM_asm_variable}
+            timestepdim = "[${CYLC_TASK_PARAM_timestep}][0:71][380:520][640:800],time[${CYLC_TASK_PARAM_timestep}],lev[0:71],lat[380:520],lon[640:800]"
+            weblink = ${rootlink}${variable}${timestepdim}
+    [[download_chm_<chm_variable>_<timestep>]]
+        inherit = chmOPENDAPLINK
+        [[[environment]]]
+            rootlink = $(isodatetime $CYLC_TASK_CYCLE_POINT -f "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim/inst3_3d_asm_Nv?")
+            variable = ${CYLC_TASK_PARAM_chm_variable}
+            timestepdim = "[$((10#$CYLC_TASK_PARAM_timestep + 22000))][0:71][380:520][640:800],time[$((10#$CYLC_TASK_PARAM_timestep + 22))],lev[0:71],lat[380:520],lon[640:800]"
+            weblink = ${rootlink}${variable}${timestepdim}
+    [[<type>OPENDAPLINK]]
+        script = """
+            set -uex
+            echo $weblink
+#            weblink = 'https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/fcast/inst3_3d_asm_Nv/inst3_3d_asm_Nv.20260503_00?o3[70][0:71][380:520][640:800],time[70],lev[0:71],lat[380:520],lon[640:800]'
+#            weblink = 'https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/fcast/inst3_3d_aer_Nv/inst3_3d_aer_Nv.20260503_00?airdens[70][0:71][380:520][640:800],time[70],lev[0:71],lat[380:520],lon[640:800]'
+#            weblink = 'https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim/inst3_3d_chm_Nv?co2[24672][0:71][380:520][640:800],time[24672],lev[0:71],lat[380:520],lon[640:800]'
+            """
+    [[MERGE]]
+        script = """
+            set -uex
+            echo ${fileaer}/*.nc
+            echo ${fileasm}/*.nc
+            echo ${filechm}/*.nc
+            """
+    [[mergre<timestep>]]
+        inherit = MERGE
+        [[[environment]]]
+            fileaer = ${CYLC_TASK_SHARE_CYCLE_DIR}/download_aer_*_${CYLC_TASK_PARAM_timestep}
+            fileasm = ${CYLC_TASK_SHARE_CYCLE_DIR}/download_asm_*_${CYLC_TASK_PARAM_timestep}
+            filechm = ${CYLC_TASK_SHARE_CYCLE_DIR}/download_chm_*_${CYLC_TASK_PARAM_timestep}

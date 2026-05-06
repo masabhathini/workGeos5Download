@@ -8,10 +8,10 @@
 
 [task parameters]
     type = 'aer', 'asm', 'chm'
-    aer_variable = 'airdens', 'bcphilic' #, 'bcphobic', 'brphilic', 'brphobic', 'delp', 'dms', 'du001', 'du002', 'du003', 'du004', 'du005', 'msa', 'nh3', 'ocphilic', 'ocphobic', 'so2', 'so4', 'ss002', 'ss003', 'ss004', 'ss005'
+    aer_variable = 'airdens', 'bcphilic', 'bcphobic', 'brphilic', 'brphobic', 'delp', 'dms', 'du001', 'du002', 'du003', 'du004', 'du005', 'msa', 'nh3', 'ocphilic', 'ocphobic', 'so2', 'so4', 'ss002', 'ss003', 'ss004', 'ss005'
     asm_variable = 'o3'
     chm_variable = 'co', 'co2'
-    timestep = 4..20
+    timestep = 4..69
     [[templates]]
         type = %(type)s
         aer_variable = %(aer_variable)s
@@ -21,28 +21,29 @@
 
 [scheduling]
     initial cycle point = previous(T12)
+    initial cycle point = 20260505T12Z
     runahead limit = P1D
     [[xtriggers]]
-        clock_9H = wall_clock(offset=PT06H)
+        clock_download = wall_clock(offset=PT9H)
     [[queues]]
         [[[limitrunqueue]]]
-            limit = 3
-            members = <type>OPENDAPLINK
+            limit = 10
+            members = fcast_<type>_boundary, assim_<type>_initialcondition
 
     [[graph]]
         P1D = """
-            @clock_9H => downloadfcast_aer_<aer_variable>_<timestep> #=> clean_aer_<aer_variable>_<timestep>
-            @clock_9H => downloadfcast_asm_<asm_variable>_<timestep> #=> clean_asm_<asm_variable>_<timestep>
-            @clock_9H => downloadassim_aer_<aer_variable>_<timestep> #=> clean_aer_<aer_variable>_<timestep>
-            @clock_9H => downloadassim_asm_<asm_variable>_04 #=> clean_asm_<asm_variable>_<timestep>
-            @clock_9H => downloadassim_chm_<chm_variable>_04 #=> clean_chm_<chm_variable>_<timestep>
-            downloadfcast_aer_<aer_variable>_<timestep> & downloadfcast_asm_<asm_variable>_<timestep> & downloadassim_chm_<chm_variable>_<timestep> => mergefcast<timestep>
-            downloadassim_aer_<aer_variable>_04 & downloadassim_asm_<asm_variable>_04 & downloadassim_chm_<chm_variable>_04 =>  mergeassim_04
+            @clock_download => downloadfcast_aer_<aer_variable>_<timestep> 
+            @clock_download => downloadfcast_asm_<asm_variable>_<timestep> 
+            @clock_download => downloadfcast_chm_<chm_variable>_<timestep> 
+            downloadfcast_aer_<aer_variable>_<timestep> & downloadfcast_asm_<asm_variable>_<timestep> & downloadfcast_chm_<chm_variable>_<timestep> => mergefcast<timestep>
+
+            @clock_download => downloadassim_<type> => mergeassim 
+            mergeassim & mergefcast<timestep> => archive
             """
 
 [runtime]
     [[root]]
-        platform = localhost
+        platform = shaheen_login
         init-script = """
             set -uex
             source ${HOME}/miniforge3/bin/activate ${HOME}/miniforge3/envs/cylc
@@ -51,7 +52,7 @@
             """
         err-script = err-emailAlart.sh
         submission retry delays = 2*PT2M
-        execution retry delays = 2*PT15M
+        execution retry delays = 2*PT10M
         [[[environment]]]
             USER_EMAILS = {{USER_EMAILS}}
         [[[meta]]]
@@ -64,52 +65,47 @@
             mail events = submission failed, submission timeout, failed
         [[[environment]]]
     [[downloadfcast_aer_<aer_variable>_<timestep>]]
-        inherit = aerOPENDAPLINK
+        inherit = fcast_aer_boundary
         [[[environment]]]
             rootlink = $(isodatetime $CYLC_TASK_CYCLE_POINT -f "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/fcast/inst3_3d_aer_Nv/inst3_3d_aer_Nv.%Y%m%d_00?")
             variable = ${CYLC_TASK_PARAM_aer_variable}
+            datestamp = $(isodatetime  $CYLC_TASK_CYCLE_POINT --offset PT$((($CYLC_TASK_PARAM_timestep -4 )*3))H -f "%Y%m%d_%H%M%S") # localtime 3 + 12Z
             timestepdim = "[${CYLC_TASK_PARAM_timestep}][0:71][380:520][640:800],time[${CYLC_TASK_PARAM_timestep}],lev[0:71],lat[380:520],lon[640:800]"
             weblink = ${rootlink}${variable}${timestepdim}
     [[downloadfcast_asm_<asm_variable>_<timestep>]]
-        inherit = asmOPENDAPLINK
+        inherit = fcast_asm_boundary
         [[[environment]]]
             rootlink = $(isodatetime $CYLC_TASK_CYCLE_POINT -f "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/fcast/inst3_3d_asm_Nv/inst3_3d_asm_Nv.%Y%m%d_00?")
             variable = ${CYLC_TASK_PARAM_asm_variable}
+            datestamp = $(isodatetime  $CYLC_TASK_CYCLE_POINT --offset PT$((($CYLC_TASK_PARAM_timestep -4 )*3))H -f "%Y%m%d_%H%M%S") # localtime 3 + 12Z
             timestepdim = "[${CYLC_TASK_PARAM_timestep}][0:71][380:520][640:800],time[${CYLC_TASK_PARAM_timestep}],lev[0:71],lat[380:520],lon[640:800]"
             weblink = ${rootlink}${variable}${timestepdim}
-    [[downloadassim_aer_<chm_variable>_<timestep>]]
-        inherit = aerOPENDAPLINK
-        [[[environment]]]
-            rootlink = $(isodatetime $CYLC_TASK_CYCLE_POINT -f "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim/inst3_3d_aer_Nv?")
-            variable = ${CYLC_TASK_PARAM_aer_variable}
-            diffdays = $(isodatetime "2017-12-01T00:00:00" $CYLC_TASK_CYCLE_POINT --offset PT15H) # localtime 3 + 12Z
-            days = ${diffdays:1:-1}
-            timestepdim = "[$((10#$CYLC_TASK_PARAM_timestep + days * 8))][0:71][380:520][640:800],time[$((10#$CYLC_TASK_PARAM_timestep + days * 8))],lev[0:71],lat[380:520],lon[640:800]"
-            weblink = ${rootlink}${variable}${timestepdim}
-    [[downloadassim_asm_<asm_variable>_<timestep>]]
-        inherit = asmOPENDAPLINK
-        [[[environment]]]
-            rootlink = $(isodatetime $CYLC_TASK_CYCLE_POINT -f "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim/inst3_3d_asm_Nv?")
-            variable = ${CYLC_TASK_PARAM_asm_variable}
-            diffdays = $(isodatetime "2017-12-01T00:00:00" $CYLC_TASK_CYCLE_POINT --offset PT15H) # localtime 3 + 12Z
-            days = ${diffdays:1:-1}
-            timestepdim = "[$((10#$CYLC_TASK_PARAM_timestep + days * 8))][0:71][380:520][640:800],time[$((10#$CYLC_TASK_PARAM_timestep + days * 8))],lev[0:71],lat[380:520],lon[640:800]"
-            weblink = ${rootlink}${variable}${timestepdim}
-    [[downloadassim_chm_<chm_variable>_<timestep>]]
-        inherit = chmOPENDAPLINK
+    [[downloadfcast_chm_<chm_variable>_<timestep>]]
+        inherit = fcast_chm_boundary
         [[[environment]]]
             rootlink = $(isodatetime $CYLC_TASK_CYCLE_POINT -f "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim/inst3_3d_chm_Nv?")
             variable = ${CYLC_TASK_PARAM_chm_variable}
+            datestamp = $(isodatetime  $CYLC_TASK_CYCLE_POINT --offset PT$((($CYLC_TASK_PARAM_timestep -4 )*3))H -f "%Y%m%d_%H%M%S") # localtime 3 + 12Z
             diffdays = $(isodatetime "2017-12-01T00:00:00" $CYLC_TASK_CYCLE_POINT --offset PT15H) # localtime 3 + 12Z
             days = ${diffdays:1:-1}
             timestepdim = "[$((10#$CYLC_TASK_PARAM_timestep + days * 8))][0:71][380:520][640:800],time[$((10#$CYLC_TASK_PARAM_timestep + days * 8))],lev[0:71],lat[380:520],lon[640:800]"
+            timestepdim = "[$((days * 8 + 4))][0:71][380:520][640:800],time[$((days * 8 + 4))],lev[0:71],lat[380:520],lon[640:800]"
             weblink = ${rootlink}${variable}${timestepdim}
+    [[downloadassim_<type>]]
+        script = """
+            set -uex
+            wget ${http_link}
+            """
+            inherit = assim_<type>_initialcondition
+        [[[environment]]]
+            http_link = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das/Y%Y/M%m/D%d/GEOS.fp.asm.inst3_3d_${CYLC_TASK_PARAM_type}_Nv.%Y%m%d_%H00.V01.nc4")
 
-    [[<type>OPENDAPLINK]]
+    [[fcast_<type>_boundary, assim_<type>_initialcondition]]
         script = """
             set -uex
             echo $weblink
-            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/downloadOPENDAP.py ${weblink}
+            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/downloadOPENDAP.py ${weblink} ${datestamp}
+            echo "Writing Timestep: $datestamp "
 #            weblink = 'https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/fcast/inst3_3d_asm_Nv/inst3_3d_asm_Nv.20260503_00?o3[70][0:71][380:520][640:800],time[70],lev[0:71],lat[380:520],lon[640:800]'
 #            weblink = 'https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/fcast/inst3_3d_aer_Nv/inst3_3d_aer_Nv.20260503_00?airdens[70][0:71][380:520][640:800],time[70],lev[0:71],lat[380:520],lon[640:800]'
 #            weblink = 'https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim/inst3_3d_chm_Nv?co2[24672][0:71][380:520][640:800],time[24672],lev[0:71],lat[380:520],lon[640:800]'
@@ -125,16 +121,45 @@
             cp ${input3}/*.nc .
             """
     [[mergefcast<timestep>]]
+        script = """
+            set -uex
+            rm -rfv *
+            cp ${input1}/*.nc  .
+            cp ${input2}/*.nc  .
+            cp ${input3}/*.nc  .
+            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/mergenetcdf.py  
+            """
         inherit = MERGE
+        platform = shaheennew
         [[[environment]]]
             timestepformat = $(printf "%02d" $CYLC_TASK_PARAM_timestep)
             input1 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadfcast_aer_*_${timestepformat}
             input2 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadfcast_asm_*_${timestepformat}
-            input3 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadassim_chm_*_${timestepformat}
-    [[mergeassim<timestep>]]
+            input3 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadfcast_chm_*_${timestepformat}
+            outputfile = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.fcast.inst3_3d_ALL_Nv_%Y%m%d_%H.nc")
+    [[mergeassim]]
+        script = """
+            set -uex
+            rm -f *
+            cp ${inputfiles}/*.nc4 .
+            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/downloadGEOS5dustICassimNC4.py ${inputaer} ${inputasm}  ${inputchm} ${outputfile}
+            rm *.nc4
+            #mv * ${TMPDIR}/
+            #mv ${TMPDIR}/*.nc .
+            """
         inherit = MERGE
+        platform = shaheennew
         [[[environment]]]
-            timestepformat = $(printf "%02d" $CYLC_TASK_PARAM_timestep)
-            input1 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadassim_aer_*_${timestepformat}
-            input2 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadassim_asm_*_${timestepformat}
-            input3 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadassim_chm_*_${timestepformat}
+            time_step = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "%Y%m%d_%H")
+            inputfiles = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadassim_*
+            outputfile = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.assim.inst3_3d_ALL_Nv_%Y%m%d_%H.nc")
+            inputaer = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.asm.inst3_3d_aer_Nv.%Y%m%d_%H00.V01.nc4")
+            inputasm = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.asm.inst3_3d_asm_Nv.%Y%m%d_%H00.V01.nc4")
+            inputchm = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.asm.inst3_3d_chm_Nv.%Y%m%d_%H00.V01.nc4")
+    [[archive]]
+        script = """
+            set -uex
+            cp ${inputfiles}  .
+            """
+        [[[environment]]]
+            inputfiles = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/merge*/GEOS*.nc

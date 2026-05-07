@@ -11,7 +11,7 @@
     aer_variable = 'airdens', 'bcphilic', 'bcphobic', 'brphilic', 'brphobic', 'delp', 'dms', 'du001', 'du002', 'du003', 'du004', 'du005', 'msa', 'nh3', 'ocphilic', 'ocphobic', 'so2', 'so4', 'ss002', 'ss003', 'ss004', 'ss005'
     asm_variable = 'o3'
     chm_variable = 'co', 'co2'
-    timestep = 4..69
+    timestep = 4..72
     [[templates]]
         type = %(type)s
         aer_variable = %(aer_variable)s
@@ -20,15 +20,15 @@
         timestep = %(timestep)02d
 
 [scheduling]
-    initial cycle point = previous(T12)
     initial cycle point = 20260505T12Z
+    initial cycle point = previous(T12)
     runahead limit = P1D
     [[xtriggers]]
         clock_download = wall_clock(offset=PT9H)
     [[queues]]
         [[[limitrunqueue]]]
-            limit = 10
-            members = fcast_<type>_boundary, assim_<type>_initialcondition
+            limit = 20
+            members = fcast_<type>_boundary, assim_<type>_initialcondition, MERGE
 
     [[graph]]
         P1D = """
@@ -38,12 +38,13 @@
             downloadfcast_aer_<aer_variable>_<timestep> & downloadfcast_asm_<asm_variable>_<timestep> & downloadfcast_chm_<chm_variable>_<timestep> => mergefcast<timestep>
 
             @clock_download => downloadassim_<type> => mergeassim 
-            mergeassim & mergefcast<timestep> => archive
+            mergeassim & mergefcast<timestep> => archive => transfer
             """
 
 [runtime]
     [[root]]
-        platform = shaheen_login
+        platform = shaheennew_login
+        platform = localhost
         init-script = """
             set -uex
             source ${HOME}/miniforge3/bin/activate ${HOME}/miniforge3/envs/cylc
@@ -130,7 +131,7 @@
             python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/mergenetcdf.py  
             """
         inherit = MERGE
-        platform = shaheennew
+        #platform = shaheennew
         [[[environment]]]
             timestepformat = $(printf "%02d" $CYLC_TASK_PARAM_timestep)
             input1 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadfcast_aer_*_${timestepformat}
@@ -148,7 +149,7 @@
             #mv ${TMPDIR}/*.nc .
             """
         inherit = MERGE
-        platform = shaheennew
+        #platform = shaheennew
         [[[environment]]]
             time_step = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "%Y%m%d_%H")
             inputfiles = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadassim_*
@@ -159,7 +160,18 @@
     [[archive]]
         script = """
             set -uex
-            cp ${inputfiles}  .
+            rm -rfv *
+            mkdir ${datestamp}
+            cp ${inputfiles}  ${datestamp}/
             """
         [[[environment]]]
             inputfiles = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/merge*/GEOS*.nc
+            datestamp = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "%Y%m%d00")
+    [[transfer]]
+        script = """
+            set -uex
+            scp -r ${input}/*  shaheennew:${output}/
+            """
+        [[[environment]]]
+            input = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/archive
+            output = /scratch/masabas/k10021/forcing_downloaded/input-GEOS5dustIC

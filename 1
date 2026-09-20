@@ -1,0 +1,126 @@
+#!jinja2
+{% from 'metomi' import isodatetime %}
+{% set USER_EMAILS = "sateesh.masabathini@kaust.edu.sa" %}
+
+[scheduler]
+    allow implicit tasks = True
+    cycle point format = CCYYMMDDThhZ
+
+[task parameters]
+    type = 'AER', 'ASM', 'CHM'
+    [[templates]]
+        type = %(type)s
+
+[scheduling]
+    initial cycle point = 20150101T00Z
+    runahead limit = P1D
+    [[xtriggers]]
+        clock_download = wall_clock(offset=PT3H)
+    [[queues]]
+        [[[limitrunqueue]]]
+            limit = 1
+            members = DOWNLOAD, MERGE, TRANSFER
+
+    [[graph]]
+        P1D = """
+            @clock_download => downloadMerra_<type> => merge => transfer => cleanup
+            """
+
+[runtime]
+    [[root]]
+        platform = shaheennew_login
+        platform = localhost
+        init-script = """
+            set -uex
+            source ${HOME}/miniforge3/bin/activate ${HOME}/miniforge3/envs/cylc
+            echo $PATH
+            export USER_EMAILS={{USER_EMAILS}}
+            """
+        err-script = err-emailAlart.sh
+        submission retry delays = 2*PT2M
+        execution retry delays = 2*PT10M
+        [[[environment]]]
+            USER_EMAILS = {{USER_EMAILS}}
+        [[[meta]]]
+            description = " MERRA2 data download"
+            owner = "sateesh.masabathini@kaust.edu.sa"
+            team = "Data Production team."
+        [[[mail]]]
+            to = {{ USER_EMAILS }}
+        [[[events]]]
+            mail events = submission failed, submission timeout, failed
+        [[[environment]]]
+    [[DOWNLOAD]]
+        script = """
+            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/downloadMerra2reanalysis_${variable}.py ${variable} ${datestamp}
+            """
+    [[downloadfcast_<type>]]
+        inherit = DOWNLOAD
+        [[[environment]]]
+            variable = ${CYLC_TASK_PARAM_aer_variable}
+            datestamp = $(isodatetime  $CYLC_TASK_CYCLE_POINT  -f "%Y-%m-%d")
+    [[MERGE]]
+        script = """
+            set -uex
+            echo ${input1}/*.nc
+            echo ${input2}/*.nc
+            echo ${input3}/*.nc
+            cp ${input1}/*.nc .
+            cp ${input2}/*.nc .
+            cp ${input3}/*.nc .
+            """
+    [[merge]]
+        script = """
+            set -uex
+            rm -rfv *
+            cp ${input1}/*.nc  .
+            cp ${input2}/*.nc  .
+            cp ${input3}/*.nc  .
+            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/mergenetcdf.py  
+            """
+        inherit = MERGE
+        #platform = shaheennew
+        [[[environment]]]
+            timestepformat = $(printf "%02d" $CYLC_TASK_PARAM_timestep)
+            input1 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadfcast_aer_*_${timestepformat}
+            input2 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadfcast_asm_*_${timestepformat}
+            input3 = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadfcast_chm_*_${timestepformat}
+            outputfile = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.fcast.inst3_3d_ALL_Nv_%Y%m%d_%H.nc")
+    [[mergeassim]]
+        script = """
+            set -uex
+            rm -f *
+            cp ${inputfiles}/*.nc4 .
+            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/downloadGEOS5dustICassimNC4.py ${inputaer} ${inputasm}  ${inputchm} ${outputfile}
+            rm *.nc4
+            #mv * ${TMPDIR}/
+            #mv ${TMPDIR}/*.nc .
+            """
+        inherit = MERGE
+        #platform = shaheennew
+        [[[environment]]]
+            time_step = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "%Y%m%d_%H")
+            inputfiles = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadassim_*
+            outputfile = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.assim.inst3_3d_ALL_Nv_%Y%m%d_%H.nc")
+            inputaer = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.asm.inst3_3d_aer_Nv.%Y%m%d_%H00.V01.nc4")
+            inputasm = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.asm.inst3_3d_asm_Nv.%Y%m%d_%H00.V01.nc4")
+            inputchm = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.asm.inst3_3d_chm_Nv.%Y%m%d_%H00.V01.nc4")
+    [[archive]]
+        script = """
+            set -uex
+            rm -rfv *
+            mkdir ${datestamp}
+            cp ${inputfiles}  ${datestamp}/
+            """
+        [[[environment]]]
+            inputfiles = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/merge*/GEOS*.nc
+            datestamp = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "%Y%m%d00")
+    [[transfer]]
+        script = """
+            set -uex
+            scp -r ${input}/*  shaheennew:${output}/
+            """
+        [[[environment]]]
+            input = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/archive
+            output = /scratch/masabas/k10021/forcing_downloaded/input-GEOS5dustIC
+    [[cleanup]]

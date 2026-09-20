@@ -20,14 +20,14 @@
         timestep = %(timestep)02d
 
 [scheduling]
-    initial cycle point = 20260505T12Z
+    initial cycle point = 20260826T12Z
     initial cycle point = previous(T12)
     runahead limit = P1D
     [[xtriggers]]
         clock_download = wall_clock(offset=PT9H)
     [[queues]]
         [[[limitrunqueue]]]
-            limit = 20
+            limit = 4
             members = fcast_<type>_boundary, assim_<type>_initialcondition, MERGE
 
     [[graph]]
@@ -51,9 +51,9 @@
             echo $PATH
             export USER_EMAILS={{USER_EMAILS}}
             """
-        err-script = err-emailAlart.sh
-        submission retry delays = 2*PT2M
-        execution retry delays = 2*PT10M
+#        err-script = err-script.sh
+        submission retry delays = 2*PT2M, 5*PT10M
+        execution retry delays = PT60M
         [[[environment]]]
             USER_EMAILS = {{USER_EMAILS}}
         [[[meta]]]

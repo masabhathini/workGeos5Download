@@ -1,6 +1,7 @@
 #!jinja2
 {% from 'metomi' import isodatetime %}
 {% set USER_EMAILS = "sateesh.masabathini@kaust.edu.sa" %}
+{% set ACCOUNT = "k10189" %}
 
 [scheduler]
     allow implicit tasks = True
@@ -12,8 +13,8 @@
         type = %(type)s
 
 [scheduling]
-    initial cycle point = 20150101T00Z
-    final cycle point = 20150104T00Z
+    initial cycle point = 20141231T00Z
+    final cycle point = 20170101T00Z
     runahead limit = P1D
     [[queues]]
         [[[limitrunqueue]]]
@@ -22,14 +23,14 @@
 
     [[graph]]
         P1D = """
-            downloadMerra_<type> => merge => archive
+            downloadMerra_<type> => subsetMerra_<type> => merge => archive
             """
 
 [runtime]
     [[root]]
         init-script = """
             set -uex
-            #source ${HOME}/miniforge3/bin/activate ${HOME}/miniforge3/envs/cylc
+            #source ${HOME}/miniforge3/bin/activate ${HOME}/miniforge3/envs/cylc # localhost
             source /scratch/masabas/iops/sw/miniconda3-amd64/bin/activate  envPy311Sat
             echo $PATH
             export USER_EMAILS={{USER_EMAILS}}
@@ -39,6 +40,7 @@
         execution retry delays = 2*PT10M
         [[[environment]]]
             USER_EMAILS = {{USER_EMAILS}}
+            outputfile = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "subset_Merra2_M2I3NV_AER_CHM_%Y-%m-%d.nc")
         [[[meta]]]
             description = " MERRA2 data download"
             owner = "sateesh.masabathini@kaust.edu.sa"
@@ -50,15 +52,33 @@
         [[[environment]]]
     [[DOWNLOAD]]
         script = """
-            mkdir -p ${archive}
-            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/downloadMerra2reanalysis.py ${CYLC_TASK_PARAM_type} ${datestamp} ${archive}
+            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/downloadMerra2reanalysis.py ${CYLC_TASK_PARAM_type} ${datestamp} ${outputdir}
             """
         platform = shaheennew_login
     [[downloadMerra_<type>]]
         inherit = DOWNLOAD
         [[[environment]]]
             datestamp = $(isodatetime  $CYLC_TASK_CYCLE_POINT  -f "%Y-%m-%d")
-            archive = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/archive
+            outputdir = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/${CYLC_TASK_NAME}
+    [[subsetMerra_<type>]]
+        script = """
+            set -uex
+            #rm -rfv *
+            mkdir -p ${outputdir}
+            python ${CYLC_WORKFLOW_RUN_DIR}/lib/python/subsetnetcdf.py ${inputdir} 
+            mv * ${outputdir}/
+            """
+        platform = shaheennew
+        [[[environment]]]
+            inputdir = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/downloadMerra_${CYLC_TASK_PARAM_type}/
+            outputdir = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/archive/
+        [[[directives]]]
+            --partition = workq
+            --account = {{ACCOUNT}}
+            --ntasks = 16
+            --nodes = 1
+            --time = 02:20:00
+            --hint = nomultithread
     [[merge]]
         script = """
             set -uex
@@ -68,14 +88,21 @@
         platform = shaheennew
         [[[environment]]]
             input = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/archive/
-            outputfile = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.fcast.inst3_3d_ALL_Nv_%Y%m%d_%H.nc")
+        [[[directives]]]
+            --partition = workq
+            --account = {{ACCOUNT}}
+            --ntasks = 16
+            --nodes = 1
+            --time = 02:20:00
+            --hint = nomultithread
     [[archive]]
         script = """
             set -uex
-            mkdir -p ${CYLC_TASK_CYCLE_POINT}
-            cp ${inputpath}/${inputfile}  ${output}/
+            mkdir -p ${output}
+            mv ${inputpath}/${inputfile}  ${output}/
             """
+        platform = shaheennew_login
         [[[environment]]]
-            inputfile = $(isodatetime $CYLC_TASK_CYCLE_POINT  -f "GEOS.fp.fcast.inst3_3d_ALL_Nv_%Y%m%d_%H.nc")
+            inputfile = ${outputfile} 
             inputpath = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/merge
-            output = /scratch/masabas/k10021/forcing_downloaded/input-GEOS5dustIC/${CYLC_TASK_CYCLE_POINT}
+            output = /scratch/masabas/k10021/forcing_downloaded/input-GEOS5dustIC/archive/

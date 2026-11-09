@@ -38,7 +38,7 @@
             downloadfcast_aer_<aer_variable>_<timestep> & downloadfcast_asm_<asm_variable>_<timestep> & downloadfcast_chm_<chm_variable>_<timestep> => mergefcast<timestep>
 
             @clock_download => downloadassim_<type> => mergeassim 
-            mergeassim & mergefcast<timestep> => archive => transfer
+            mergeassim & mergefcast<timestep> => archive => transfer => clean
             """
 
 [runtime]
@@ -53,7 +53,8 @@
             """
 #        err-script = err-script.sh
         submission retry delays = 2*PT2M, 5*PT10M
-        execution retry delays = PT60M
+        execution retry delays = 2*PT60M
+        execution time limit = PT10M
         [[[environment]]]
             USER_EMAILS = {{USER_EMAILS}}
         [[[meta]]]
@@ -175,3 +176,10 @@
         [[[environment]]]
             input = ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/archive
             output = /scratch/masabas/k10021/forcing_downloaded/input-GEOS5dustIC
+    [[clean]]
+        script = """
+            set -uex
+            rm -rfv ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/download*
+            rm -rfv ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/merge*
+            """
+        [[[environment]]]

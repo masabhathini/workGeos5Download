@@ -51,6 +51,10 @@
             echo $PATH
             export USER_EMAILS={{USER_EMAILS}}
             """
+        err-script = """
+            set -uex
+            rm -rfv ${CYLC_WORKFLOW_WORK_DIR}/${CYLC_TASK_CYCLE_POINT}/${CYLC_TASK_NAME}
+            """
 #        err-script = err-script.sh
         submission retry delays = 2*PT2M, 5*PT10M
         execution retry delays = 2*PT60M
